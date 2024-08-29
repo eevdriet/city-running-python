@@ -1,8 +1,26 @@
-/.venv
-/cache
-/data
-/edges.gpkg
-/Katendrecht.graphml
-/log
-/nodes.gpkg
-/RESULT.html
+# Ignore folders
+build
+data
+cache
+img
+
+# - Python
+venv
+.venv
+*.pyc
+.pytest_cache
+__pycache__
+*.egg-info
+
+# - Data
+*.feather
+
+# - General
+*.log
+*.log.*
+*.out
+*.tdo
+
+# - Editors
+.vscode
+.idea

@@ -1,7 +1,0 @@
-setup.cfg
-setup.py
-src/city_running.egg-info/PKG-INFO
-src/city_running.egg-info/SOURCES.txt
-src/city_running.egg-info/dependency_links.txt
-src/city_running.egg-info/not-zip-safe
-src/city_running.egg-info/top_level.txt
