@@ -1,0 +1,8 @@
+/.venv
+/cache
+/data
+/edges.gpkg
+/Katendrecht.graphml
+/log
+/nodes.gpkg
+/RESULT.html
