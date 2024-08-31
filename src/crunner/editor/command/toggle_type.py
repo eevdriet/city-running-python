@@ -8,8 +8,8 @@ from crunner.graph import (
     Node,
     ToggleOption,
     find_disconnected_elements,
-    toggle_edge_remove,
-    toggle_node_remove,
+    toggle_edge_attr,
+    toggle_node_attr,
 )
 
 
@@ -21,12 +21,6 @@ class ToggleTypeCommand(Command):
 
         self.nodes: set[Node] = set()
         self.nodes: set[Node] = set()
-
-    def __toggle(self, nodes: set[Node], edges: set[Node]):
-        for node in nodes:
-            toggle_node_remove(self.graph, node)
-        for edge in edges:
-            toggle_edge_remove(self.graph, *edge)
 
     def __find_and_toggle(self):
         # Verify whether an edge of of a given type
@@ -44,18 +38,18 @@ class ToggleTypeCommand(Command):
 
         # Find all edges with the given type
         self.edges = {
-            (src, dst)
-            for src, dst, data in self.graph.edges(data=True)
+            (src, dst, key)
+            for src, dst, key, data in self.graph.edges(data=True, keys=True)
             if "highway" in data and (toggle_all != is_type(data["highway"], self.typ))
         }
 
         # Toggle all edges with typ
-        self.__toggle(set(), self.edges)
+        self._toggle(set(), self.edges)
 
         # Also toggle all disconnected or reconnected parts
         if self.toggle_opt != ToggleOption.NO_TOGGLE:
             nodes, edges = find_disconnected_elements(self.graph, self.toggle_opt)
-            self.__toggle(nodes, edges)
+            self._toggle(nodes, edges)
 
             self.nodes.update(nodes)
             self.edges.update(edges)
@@ -66,11 +60,11 @@ class ToggleTypeCommand(Command):
 
     @override
     def undo(self):
-        self.__toggle(self.nodes, self.edges)
+        self._toggle(self.nodes, self.edges)
 
     @override
     def redo(self):
-        self.__toggle(self.nodes, self.edges)
+        self._toggle(self.nodes, self.edges)
 
 
 def toggle_type_menu(

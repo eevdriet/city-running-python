@@ -16,7 +16,7 @@ logger = setup_logger(__name__)
 class Postman:
     def rpp_undirected(self, graph: nx.MultiDiGraph, source: Optional[int] = None):
         # Change the graph into its undirected version
-        self.graph = nx.Graph(graph)
+        self.graph = convert_to_simple_undirected(graph)
 
         if not nx.is_connected(self.graph):
             logger.info("Graph is not connected, exiting...")
@@ -37,7 +37,7 @@ class Postman:
         )
         graph = self.__add_matching_to_graph(min_matching, self.graph)
 
-        return self.__find_euler_circuit(graph, self.graph, source=source)
+        return self.__find_euler_circuit(graph, self.graph, source=source), graph
 
     def __collect_stats(self, circuit):
         circuit_stats = {

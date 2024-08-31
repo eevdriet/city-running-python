@@ -8,7 +8,8 @@ import polars as pl
 import shapely
 from veelog import setup_logger
 
-from crunner.graph import annotate_with_distances
+from crunner.common import GRAPH_PATH, NON_RUNNABLE_ROADS, POLYGON_PATH
+from crunner.graph import annotate_with_distances, toggle_edge_attr, toggle_node_attr
 
 logger = setup_logger(__name__)
 
@@ -20,19 +21,6 @@ class Handler:
     as well as to filter unconnected components
     """
 
-    NON_RUNNABLE_ROADS = [
-        "primary",
-        "primary_link",
-        "secondary",
-        "secondary_link",
-        # "tertiary",
-        # "tertiary_link",
-        "motorway",
-        "motorway_link",
-    ]
-
-    CACHE_PATH = Path.cwd() / "data" / "graph"
-    POLYGON_PATH = Path.cwd() / "data" / "polygon"
     DEFAULT_LOADING_ARGS = {
         "network_type": "all",
         "retain_all": True,
@@ -40,7 +28,7 @@ class Handler:
     }
 
     @classmethod
-    def __load(cls, load_func: callable, load_with_args: bool = True, **kwargs):
+    def __load(cls, load_func, load_with_args: bool = True, **kwargs):
         # Load the graph
         args = {}
         if load_with_args:
@@ -56,8 +44,8 @@ class Handler:
         graph = nx.relabel_nodes(graph, node_ids)
 
         # Edit the graph
-        # graph = cls.__remove_non_runnable_roads(graph)
         graph = cls.__remove_multiple_road_types(graph)
+        graph = cls.__toggle_non_runnable_roads(graph)
         graph = annotate_with_distances(graph)
 
         return graph
@@ -87,39 +75,40 @@ class Handler:
 
     @classmethod
     def load_from_polygon_file(cls, path: Path) -> nx.Graph:
-        path = cls.POLYGON_PATH / path.with_suffix("").with_suffix(".csv")
+        path = POLYGON_PATH / path.with_suffix("").with_suffix(".csv")
         polygon = cls.__load_polygon(path)
 
         return cls.__load_from_polygon(polygon)
 
     @classmethod
     def load_from_file(cls, path: Path, **kwargs) -> nx.MultiDiGraph:
-        path = cls.CACHE_PATH / path.with_suffix("").with_suffix(".graphml")
+        path = GRAPH_PATH / path.with_suffix("").with_suffix(".graphml")
         load_func = partial(ox.load_graphml, filepath=path)
 
         return cls.__load(load_func, load_with_args=False)
 
     @classmethod
     def save(cls, graph: nx.Graph, path: Path):
-        path = cls.CACHE_PATH / path.with_suffix("").with_suffix(".graphml")
+        path = GRAPH_PATH / path.with_suffix("").with_suffix(".graphml")
         ox.save_graphml(graph, path)
 
     @classmethod
-    def __remove_non_runnable_roads(cls, graph: nx.Graph):
+    def __toggle_non_runnable_roads(cls, graph: nx.Graph):
         # Remove non-runnable roads
         edges_to_remove = [
-            (src, dst)
-            for src, dst, data in graph.edges(data=True)
+            (src, dst, key)
+            for src, dst, key, data in graph.edges(data=True, keys=True)
             if any(
-                road_type in data.get("highway", "")
-                for road_type in cls.NON_RUNNABLE_ROADS
+                road_type in data.get("highway", "") for road_type in NON_RUNNABLE_ROADS
             )
         ]
-        graph.remove_edges_from(edges_to_remove)
+
+        for src, dst, key in edges_to_remove:
+            toggle_edge_attr(graph, src, dst, key, "is_removed")
 
         # Remove orphaned nodes only connecting to those roads
-        nodes_to_remove = [node for node, degree in graph.degree if degree == 0]
-        graph.remove_nodes_from(nodes_to_remove)
+        # nodes_to_remove = [node for node, degree in graph.degree if degree == 0]
+        # graph.remove_nodes_from(nodes_to_remove)
 
         return graph
 

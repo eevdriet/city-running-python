@@ -10,6 +10,7 @@ import networkx as nx
 import osmnx as ox
 from veelog import setup_logger
 
+from crunner.common import HTML_PATH
 from crunner.graph import *
 from crunner.handler import Handler
 from crunner.route import Postman
@@ -18,24 +19,8 @@ logger = setup_logger(__name__)
 
 Circuit = list[tuple[int, int, any]]
 
-# for idx, (coord, label) in enumerate(zip(coords, labels)):
-#     # Add edges
-#     folium.PolyLine(
-#         [(y, x) for x, y in coord],
-#         color="red",
-#         weight=3,
-#         opacity=0.8,
-#         tooltip=label,
-#     ).add_to(map)
-
-# path = Path.cwd() / "data" / f"circuit.html"
-# map.save(path)
-
 
 class Plotter:
-    def __get_node_positions(self, graph: nx.Graph) -> dict[int, tuple[int, int]]:
-        return {node: (data["x"], data["y"]) for node, data in graph.nodes(data=True)}
-
     @classmethod
     def create_map(cls, graph: nx.Graph) -> folium.Map:
         center = find_center(graph)
@@ -44,9 +29,16 @@ class Plotter:
 
     @classmethod
     def create_line(
-        cls, coords: list[Coord], color: str = "black", opacity: float = 1.0, **kwargs
+        cls,
+        coords: list[Coord],
+        color: str = "black",
+        opacity: float = 1.0,
+        weight: float = 2.0,
+        **kwargs,
     ) -> folium.PolyLine:
-        return folium.PolyLine(locations=coords, color=color, opacity=opacity)
+        return folium.PolyLine(
+            locations=coords, color=color, opacity=opacity, weight=weight
+        )
 
     @classmethod
     def create_marker(cls, text: str, location: Coord, **kwargs) -> folium.Marker:
@@ -73,13 +65,14 @@ class Plotter:
         )
 
     @classmethod
-    def create_timed_lines2(
+    def create_timeline(
         cls, edges: list[list[Coord]]
     ) -> folium.plugins.TimestampedGeoJson:
+        # Determine start and end "date" of the edges to display
         start = datetime(2024, 1, 1)
         end = start + timedelta(minutes=len(edges))
 
-        # edge_data = [[(lon, lat) for lat, lon in edge] for edge in edges]
+        # Display each edge for one segment
         edge_data = [
             (
                 [(lon, lat) for lat, lon in edge],
@@ -88,9 +81,10 @@ class Plotter:
             for itr, edge in enumerate(edges)
         ]
 
+        # Create features from all edges
         features = []
         for edge, timestamp in edge_data:
-            # Add the currently walking feature
+            # Add the currently walking edge
             features.append(
                 {
                     "type": "Feature",
@@ -106,7 +100,7 @@ class Plotter:
                 }
             )
 
-            # Add the already walked feature
+            # Add the already walked edges
             features.append(
                 {
                     "type": "Feature",
@@ -122,6 +116,7 @@ class Plotter:
                 }
             )
 
+        # Transform the features into JSON data and create time line
         geojson_data = {"type": "FeatureCollection", "features": features}
         timeline = folium.plugins.Timeline(
             geojson_data,
@@ -130,40 +125,16 @@ class Plotter:
             ),
         )
 
+        # Create slider for the timeline
         timeline_slider = folium.plugins.TimelineSlider(
             auto_play=False,
             show_ticks=True,
             enable_keyboard_controls=True,
-            playback_duration=300 * len(edges),
+            playback_duration=600 * len(edges),
         )
         timeline_slider = timeline_slider.add_timelines(timeline)
 
         return timeline, timeline_slider
-
-    def plot_odd_nodes(self, graph: nx.Graph):
-        # Draw graph with all nodes
-        fig, ax = ox.plot_graph(nx.MultiDiGraph(graph), show=False, close=False)
-        node_pos = self.__get_node_positions(graph)
-
-        nx.draw_networkx_nodes(
-            graph,
-            pos=node_pos,
-            nodelist=[node for node, degree in graph.degree if degree % 2 == 1],
-            node_size=20,
-            node_color="red",
-            # ax=ax,
-        )
-        nx.draw_networkx_labels(
-            graph,
-            pos=node_pos,
-            labels={node: node for node in graph.nodes()},
-            font_size=8,
-            font_color="white",
-            verticalalignment="top",
-            # ax=ax,
-        )
-
-        plt.show()
 
     def plot_circuit(self, graph: nx.Graph, circuit: Circuit):
         if len(circuit) == 0:
@@ -175,11 +146,7 @@ class Plotter:
         # Setup map and nodes
         map = self.create_map(graph)
 
-        # for node in graph.nodes():
-        #     if (location := find_node_location(graph, node)) is not None:
-        #         marker = self.create_marker(node, location)
-        #         marker.add_to(map)
-
+        # Add the start location
         if start_location := find_node_location(graph, source):
             start_marker = self.create_marker(
                 source,
@@ -189,12 +156,14 @@ class Plotter:
             )
             start_marker.add_to(map)
 
+        # Add a timeline of all traversed edges in the circuit
         edges = [find_edge_coords(graph, src, dst) for src, dst, _ in circuit]
-        timeline, timeline_slider = self.create_timed_lines2(edges)
+        timeline, timeline_slider = self.create_timeline(edges)
         timeline.add_to(map)
         timeline_slider.add_to(map)
 
-        for itr, (src, dst, data) in enumerate(circuit, start=1):
+        # Label edges that are traversed more than once
+        for src, dst, data in circuit:
             n_visits = data["n_visits"]
             if n_visits > 1:
                 mid_point = find_edge_midpoint(graph, src, dst)
@@ -206,13 +175,10 @@ class Plotter:
                 )
                 seq_marker.add_to(map)
 
-            # if not "," in data["sequence"]:
-            #     path = folium.plugins.AntPath(locations=coords, weight=10, delay=2000)
-            #     path.add_to(map)
-
-        path = Path.cwd() / "data" / f"out.html"
+        # Save the circuit map
+        path = HTML_PATH / f"circuit.html"
         map.save(path)
-        logger.info("Graph explored!")
+        logger.info("Circuit explored!")
 
 
 if __name__ == "__main__":

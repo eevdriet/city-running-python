@@ -11,7 +11,7 @@ import pandas as pd
 from shapely import Polygon
 from veelog import setup_logger
 
-from crunner.color import ROAD_COLOR_MAP
+from crunner.common import HTML_PATH, ROAD_COLOR_MAP
 from crunner.graph import *
 from crunner.plotter import Plotter
 
@@ -23,6 +23,9 @@ class Explorer:
     This class
     """
 
+    def __init__(self):
+        self.plotter = Plotter()
+
     @classmethod
     def explore_places(cls, parent_place: str):
         tags = {"place": True}
@@ -31,67 +34,30 @@ class Explorer:
         return list(sorted(df_geom["name"].dropna().unique()))
 
     def explore_components(self, graph: nx.MultiDiGraph):
-        components = list(nx.weakly_connected_components(graph))
+        nodes, edges = find_disconnected_elements(graph, ToggleOption.KEEP_LARGEST)
+        print("Disconnected")
+        print(f"\tNodes: {nodes}")
+        print(f"\tEdges: {edges}")
 
-        color_map = matplotlib.colormaps.get_cmap("tab10")
-        colors = [mcolors.to_hex(color_map(idx)) for idx in range(len(components))]
+        map = self.plotter.create_map(graph)
 
-        # Create road map
-        map = folium.Map(location=find_center(graph), zoom_start=13)
+        for node in nodes:
+            location = find_node_location(graph, node)
 
-        for idx, (color, component) in enumerate(zip(colors, components)):
-            sub_graph = nx.MultiDiGraph(graph.subgraph(component))
-            nodes = list(sub_graph.nodes())
-            edges = list(sub_graph.edges())
+            marker = self.plotter.create_marker(node, location)
+            marker.add_to(map)
 
-            print(f"Component {idx + 1} has {len(nodes)} node and {len(edges)} edges")
-            df_nodes = (
-                ox.graph_to_gdfs(sub_graph, nodes=True, edges=False)
-                if len(nodes) > 0
-                else gpd.GeoDataFrame()
+        for edge in edges:
+            coords = find_edge_coords(graph, *edge)
+
+            line = self.plotter.create_line(
+                coords,
             )
-            df_edges = (
-                ox.graph_to_gdfs(sub_graph, nodes=False, edges=True)
-                if len(edges) > 0
-                else gpd.GeoDataFrame()
-            )
+            line.add_to(map)
 
-            # Add nodes to the map
-            for idx, node in df_nodes.iterrows():
-                folium.CircleMarker(
-                    radius=2 if len(edges) > 0 else 10,
-                    color="black",
-                    tooltip=node.name,
-                    popup=f"Node ID: {idx}",
-                    fill_opacity=0.9,
-                    location=[node["y"], node["x"]],
-                ).add_to(map)
-
-                folium.map.Marker(
-                    [node["y"] + 0.5, node["x"]],
-                    icon=folium.DivIcon(
-                        icon_size=(50, 18),
-                        icon_anchor=(0, 0),
-                        html=f'<div style="font-size: 24pt">{node.name}</div>',
-                    ),
-                ).add_to(map)
-
-            # Add edges to the map
-            for idx, edge in df_edges.iterrows():
-                geometry = edge["geometry"]
-                if not geometry:
-                    continue
-
-                folium.PolyLine(
-                    locations=[(lat, lng) for lng, lat in list(geometry.coords)],
-                    color=color,
-                    weight=2,
-                    opacity=0.9,
-                ).add_to(map)
-
-        path = Path.cwd() / "data" / f"out.html"
+        path = HTML_PATH / f"map.html"
         map.save(path)
-        logger.info("Graph explored!")
+        logger.info("Components explored!")
 
     def explore_roads(self, graph: nx.MultiDiGraph):
         logger.info("Exploring graph...")
@@ -113,21 +79,64 @@ class Explorer:
             lambda val: ROAD_COLOR_MAP.get(val, "#000000")
         )
 
+        # Determine whether an edge is a bridge
+        bridges = set(nx.bridges(nx.MultiGraph(graph)))
+
+        def is_bridge(row):
+            src, dst, *_ = tuple(map(int, row.name))
+
+            return (src, dst) in bridges or (dst, src) in bridges
+
+        df_edges["is_bridge"] = df_edges.apply(is_bridge, axis=1)
+
         # Filter edges on whether removed or not
         if "is_removed" not in df_edges.columns:
             df_edges["is_removed"] = False
+        if "is_highlighted" not in df_edges.columns:
+            df_edges["is_highlighted"] = False
 
         mask = (df_edges["is_removed"] == False) | (df_edges["is_removed"].isnull())
+        mask2 = (df_edges["is_highlighted"] == False) | (
+            df_edges["is_highlighted"].isnull()
+        )
         df_edges_normal = df_edges[mask]
         df_edges_remove = df_edges[~mask]
+        df_edges_bridge = df_edges_normal[df_edges_normal["is_bridge"]]
+        df_edges_highlight = df_edges_normal[~mask2]
+
+        df = pd.DataFrame(df_edges)
 
         # Create road map
-        map = df_edges_normal.explore(
+        mapp = df_edges_normal.explore(
             column="highway",  # The column to visualize
-            color=df_edges["color"],
+            legend=True,
+            color=df_edges_normal["color"],
+            style_kwds={"weight": 5},
             zoom_start=16,
             max_zoom=25,
         )
+
+        # Add bridges to the map
+        for (src, dst, _), data in df_edges_bridge.iterrows():
+            coords = find_edge_coords(graph, src, dst)
+            line = Plotter.create_line(
+                coords,
+                color="red",
+                weight=8,
+                opacity=1.0,
+            )
+            line.add_to(mapp)
+
+        # Add highlights to map
+        for (src, dst, _), data in df_edges_highlight.iterrows():
+            coords = find_edge_coords(graph, src, dst)
+            line = Plotter.create_line(
+                coords,
+                color="blue",
+                weight=10,
+                opacity=1.0,
+            )
+            line.add_to(mapp)
 
         # Add nodes to the map
         for node, data in graph.nodes(data=True):
@@ -140,7 +149,7 @@ class Explorer:
                 )
 
                 line = Plotter.create_marker(node, location, **kwargs)
-                line.add_to(map)
+                line.add_to(mapp)
 
         # Add edges to map
         for (src, dst, _), data in df_edges_remove.iterrows():
@@ -152,17 +161,18 @@ class Explorer:
                     color="gray",
                     opacity=0.3,
                 )
-                line.add_to(map)
+                line.add_to(mapp)
 
-        path = Path.cwd() / "data" / f"out.html"
-        map.save(path)
-        logger.info("Graph explored!")
+        path = HTML_PATH / f"map.html"
+        mapp.save(path)
+        logger.info("Roads explored!")
 
 
 if __name__ == "__main__":
     from crunner.handler import Handler
 
-    # graph = Handler.load_from_file("Katendrecht")
-    graph = Handler.load_from_place("Landzicht, Rotterdam, Netherlands")
+    path = Path("Rotterdam") / "Nieuwe Werk"
+    graph = Handler.load_from_file(path)
+
     explorer = Explorer()
     explorer.explore_components(graph)

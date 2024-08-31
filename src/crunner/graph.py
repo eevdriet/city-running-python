@@ -1,3 +1,4 @@
+from collections import deque
 from itertools import pairwise
 from typing import Optional
 
@@ -39,14 +40,27 @@ def find_center(graph: nx.Graph) -> Coord:
     return lat, lng
 
 
-def find_edges(graph: nx.MultiDiGraph, src: int, dst: int, bi_directional: bool = True):
-    normal = [(u, v, key) for u, v, key in graph.out_edges(src, keys=True) if v == dst]
+def find_edges(
+    graph: nx.MultiDiGraph, src: int, dst: int, bi_directional: bool = True
+) -> list[Edge]:
+    normal = []
 
-    if not bi_directional:
-        return normal
+    if src in graph:
+        normal = [
+            (u, v, key) for u, v, key in graph.out_edges(src, keys=True) if v == dst
+        ]
 
-    reverse = [(u, v, key) for u, v, key in graph.out_edges(dst, keys=True) if v == src]
-    return normal + reverse
+        if not bi_directional:
+            return normal
+
+    if dst in graph:
+        reverse = [
+            (u, v, key) for u, v, key in graph.out_edges(dst, keys=True) if v == src
+        ]
+
+        return normal + reverse
+
+    return []
 
 
 def annotate_with_distances(graph: nx.MultiDiGraph) -> nx.MultiDiGraph:
@@ -67,7 +81,9 @@ def annotate_with_distances(graph: nx.MultiDiGraph) -> nx.MultiDiGraph:
     return graph
 
 
-def find_edge_coords(graph: nx.Graph, src: int, dst: int) -> list[Coord]:
+def find_edge_coords(
+    graph: nx.Graph, src: int, dst: int, key: int = None
+) -> list[Coord]:
     is_reversed = False
 
     # Edge doesn't exist
@@ -102,7 +118,64 @@ def find_edge_coords(graph: nx.Graph, src: int, dst: int) -> list[Coord]:
     return result
 
 
-def find_edge_midpoint(graph: nx.Graph, src: int, dst: int) -> Optional[Coord]:
+def convert_to_simple_undirected(graph: nx.MultiDiGraph) -> nx.Graph:
+    # Keep track of a counter for the new nodes
+    result = nx.Graph()
+    node_id = max(graph.nodes()) + 1
+
+    for node, data in graph.nodes(data=True):
+        result.add_node(node, **data)
+
+    for src, dst, key, data in graph.edges(keys=True, data=True):
+        # Add the first edge normally
+        if not result.has_edge(src, dst):
+            result.add_edge(src, dst, **data)
+            continue
+
+        if key == 0:
+            continue
+
+        # Split the edge for multiple edges between the same nodes
+        node = node_id
+        node_id += 1
+
+        y, x = find_edge_midpoint(graph, src, dst, key)
+        result.add_node(node, **{"x": x, "y": y})
+
+        if not ("geometry" in data and isinstance(data["geometry"], LineString)):
+            result.add_edge(src, node, **data)
+            result.add_edge(node, dst, **data)
+        else:
+            first, second = split_linestring(data["geometry"])
+            result.add_edge(src, node, **{**data, **{"geometry": first}})
+            result.add_edge(node, dst, **{**data, **{"geometry": second}})
+
+    return result
+
+
+def split_linestring(line: LineString) -> tuple[LineString, LineString]:
+    # Find the length and middle of the line
+    total_len = line.length
+    mid_point = line.interpolate(total_len / 2).coords[0]
+
+    # Split the line such that each half has the same length
+    coords = list(line.coords)
+    split_idx = next(
+        idx
+        for idx in range(1, len(coords))
+        if LineString(coords[: idx + 1]).length >= total_len / 2
+    )
+
+    # Create both halves from the coordinates before/after the split
+    first = LineString(coords[: split_idx + 1] + [mid_point])
+    second = LineString([mid_point] + coords[split_idx:])
+
+    return first, second
+
+
+def find_edge_midpoint(
+    graph: nx.MultiDiGraph, src: int, dst: int, key: Optional[int] = None
+) -> Optional[Coord]:
     if edge := graph.get_edge_data(src, dst):
         edge = edge[0]
 
@@ -118,21 +191,24 @@ def find_edge_midpoint(graph: nx.Graph, src: int, dst: int) -> Optional[Coord]:
     return (y1 + y2) / 2, (x1 + x2) / 2
 
 
-def convert_to_undirected(graph: nx.MultiDiGraph) -> nx.Graph:
-    result = nx.Graph()
-
-
-def toggle_node_remove(graph: nx.MultiDiGraph, node: int):
+def toggle_node_attr(graph: nx.MultiDiGraph, node: int, attr: str = "is_removed"):
     if not graph.has_node(node):
         print(f"WARNING: Node {node} doesn't exist, skipping...")
         return
 
-    is_removed = nx.get_node_attributes(graph, "is_removed", default=False)
-    attrs = {node: {"is_removed": not is_removed[node]}}
+    is_toggled = nx.get_node_attributes(graph, attr, default=False)
+    attrs = {node: {attr: not is_toggled[node]}}
+
     nx.set_node_attributes(graph, attrs)
 
 
-def toggle_edge_remove(graph: nx.MultiDiGraph, src: int, dst: int, key: int = None):
+def toggle_edge_attr(
+    graph: nx.MultiDiGraph,
+    src: int,
+    dst: int,
+    key: int = None,
+    attr: str = "is_removed",
+):
     key = key if key is not None else 0
 
     # Edge doesn't exist: skip
@@ -140,9 +216,9 @@ def toggle_edge_remove(graph: nx.MultiDiGraph, src: int, dst: int, key: int = No
         print(f"WARNING: Edge {src} <-> {dst} doesn't exist, skipping...")
         return
 
-    is_removed = nx.get_edge_attributes(graph, "is_removed", default=False)
+    is_toggled = nx.get_edge_attributes(graph, attr, default=False)
+    attrs = {(src, dst, key): {attr: not is_toggled[(src, dst, key)]}}
 
-    attrs = {(src, dst, key): {"is_removed": not is_removed[(src, dst, key)]}}
     nx.set_edge_attributes(graph, attrs)
 
 
@@ -150,13 +226,32 @@ class ToggleOption:
     NO_TOGGLE = 0
     KEEP_LARGEST = 1
     KEEP_FROM_NODE = 2
+    KEEP_ALL = 3
 
 
-def find_disconnected_elements(
-    graph: nx.MultiDiGraph, opt: ToggleOption
-) -> tuple[set[Node], set[Edge]]:
+def total_length(graph: nx.MultiDiGraph, count_removed: bool = False):
+    graph_u = convert_to_simple_undirected(graph)
+    result = 0
+
+    for src, dst, data in graph_u.edges(data=True):
+        if not "distance" in data:
+            print(f"WARNING: Edge {(src, dst)} has no distance")
+            continue
+
+        if "is_removed" in data and data["is_removed"] and count_removed:
+            continue
+
+        result += data["distance"]
+
+    return result
+
+
+def find_components(
+    graph: nx.MultiDiGraph, opt: ToggleOption = ToggleOption.NO_TOGGLE
+) -> list[set[Node]]:
+    # If nodes cannot be toggled, find the components "the normal way"
     if opt == ToggleOption.NO_TOGGLE:
-        return set(), set()
+        return list(nx.weakly_connected_components(graph))
 
     # Determine how the graph is disconnected based on the `is_removed` node/edge property
     remove_graph = graph.copy()
@@ -169,14 +264,69 @@ def find_disconnected_elements(
         if data.get("is_removed", False) and remove_graph.has_edge(src, dst, key):
             remove_graph.remove_edge(src, dst, key)
 
-    # Keep the component that contains the given node
-    components = list(nx.weakly_connected_components(remove_graph))
-    main_component_idx = None
+    return list(nx.weakly_connected_components(remove_graph))
 
+
+def find_partitions_from_dist(
+    graph: nx.MultiDiGraph, max_dist_m: float
+) -> list[set[Edge]]:
+    graph_u = convert_to_simple_undirected(graph)
+
+    partitions = []
+    visited: set[Edge] = set()
+
+    def bfs(start_node: Node):
+        to_explore = deque([start_node])
+        partition = set()
+        curr_dist = 0
+
+        while to_explore:
+            node = to_explore.popleft()
+
+            if node in visited:
+                continue
+
+            visited.add(node)
+
+            for neighbor in graph_u.neighbors(node):
+                edge = (node, neighbor)
+                data = graph_u.get_edge_data(*edge)
+                dist = data["distance"]
+
+                if curr_dist + dist <= max_dist_m:
+                    partition.add(edge)
+                    to_explore.append(neighbor)
+                    curr_dist += dist
+
+        return partition, curr_dist
+
+    n = 1
+    for node in graph_u.nodes:
+        if not node in visited:
+            partition, dist = bfs(node)
+            partitions.append(partition)
+
+            print(f"Partition {n} has distance of {dist}m")
+            n += 1
+
+    return partitions
+
+
+def find_disconnected_elements(
+    graph: nx.MultiDiGraph, opt: ToggleOption
+) -> tuple[set[Node], set[Edge]]:
+    components = find_components(graph, opt)
+
+    # Nothing disconnected for a single component
+    if len(components) <= 1:
+        return set(), set()
+
+    # Keep the component that contains the given node
+    main_component_idx = None
     if opt == ToggleOption.KEEP_FROM_NODE is not None:
         node = int(input("Enter node to keep component from: "))
         main_component_idx = next(
-            (idx for idx, component in enumerate(components) if node in component)
+            (idx for idx, component in enumerate(components) if node in component), None
         )
 
     # If no node given or not found in any component, keep the largest component
@@ -187,6 +337,7 @@ def find_disconnected_elements(
 
     # Remove main component and find all (disconnected) nodes and edges
     components.pop(main_component_idx)
+
     nodes = set()
     edges = set()
 

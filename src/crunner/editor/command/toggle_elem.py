@@ -9,8 +9,8 @@ from crunner.graph import (
     ToggleOption,
     find_disconnected_elements,
     find_edges,
-    toggle_edge_remove,
-    toggle_node_remove,
+    toggle_edge_attr,
+    toggle_node_attr,
 )
 
 
@@ -28,18 +28,6 @@ class ToggleElemCommand(Command):
         self.edges = edges
         self.toggle_opt = toggle_opt
 
-    def __toggle(self, nodes: list[Node], edges: list[Edge]):
-        for node in nodes:
-            toggle_node_remove(self.graph, node)
-
-        for src, dst, key in edges:
-            if key is not None:
-                toggle_edge_remove(self.graph, src, dst, key)
-                continue
-
-            for u, v, key in find_edges(self.graph, src, dst):
-                toggle_edge_remove(self.graph, u, v, key)
-
     def __find_and_toggle(self):
         # Add edges that connect to the node to toggle
         for node in self.nodes:
@@ -55,12 +43,12 @@ class ToggleElemCommand(Command):
             for src, dst, *key in [tup]
         }
 
-        self.__toggle(self.nodes, self.edges)
+        self._toggle(self.nodes, self.edges)
 
         # Also toggle all disconnected or reconnected parts
         if self.toggle_opt != ToggleOption.NO_TOGGLE:
             nodes, edges = find_disconnected_elements(self.graph, self.toggle_opt)
-            self.__toggle(nodes, edges)
+            self._toggle(nodes, edges)
 
             self.nodes.update(nodes)
             self.edges.update(edges)
@@ -71,18 +59,20 @@ class ToggleElemCommand(Command):
 
     @override
     def undo(self):
-        self.__toggle(self.nodes, self.edges)
+        self._toggle(self.nodes, self.edges)
 
     @override
     def redo(self):
-        self.__toggle(self.nodes, self.edges)
+        self._toggle(self.nodes, self.edges)
 
 
 def toggle_elem_menu(
     graph: nx.Graph, toggle_opt: ToggleOption = ToggleOption.NO_TOGGLE
 ) -> Optional[ToggleElemCommand]:
+    #     108-109,6
+    # 4-106,314-23
     output = input(
-        "List nodes/edges to remove (separate with , and separate nodes with -): "
+        "List nodes/edges to toggle (separate with , and separate nodes with -): "
     )
     if not output:
         return None
