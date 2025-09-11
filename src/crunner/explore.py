@@ -1,18 +1,16 @@
+from math import atan2, degrees
 from pathlib import Path
 
 import folium
-import geopandas as gpd
-import matplotlib
-import matplotlib.colors as mcolors
-import matplotlib.pyplot as plt
 import networkx as nx
 import osmnx as ox
 import pandas as pd
-from shapely import Polygon
 from veelog import setup_logger
 
-from crunner.common import HTML_PATH, ROAD_COLOR_MAP
+from crunner.common import HTML_PATH, MAP_PATH, ROAD_COLOR_MAP
+from crunner.editor.popup.latlng import LatLngPrecisionPopup
 from crunner.graph import *
+from crunner.path import Paths
 from crunner.plotter import Plotter
 
 logger = setup_logger(__name__)
@@ -55,11 +53,11 @@ class Explorer:
             )
             line.add_to(map)
 
-        path = HTML_PATH / f"map.html"
+        path = Paths.html("map.html")
         map.save(path)
         logger.info("Components explored!")
 
-    def explore_roads(self, graph: nx.MultiDiGraph):
+    def explore_roads(self, graph: nx.MultiDiGraph, path: Path):
         logger.info("Exploring graph...")
 
         # Add a new column to df with the color based on the highway type
@@ -69,6 +67,9 @@ class Explorer:
 
         # Normalize the highway type (only have the first)
         def normalize(roads):
+            if pd.isna(roads):
+                return "unclassified"
+
             if isinstance(roads, list):  # If highway is a list, take the first one
                 return roads[0]
 
@@ -76,14 +77,15 @@ class Explorer:
 
         df_edges["highway"] = df_edges["highway"].apply(normalize)
         df_edges["color"] = df_edges["highway"].apply(
-            lambda val: ROAD_COLOR_MAP.get(val, "#000000")
+            lambda val: ROAD_COLOR_MAP.get(val, "#FFF000")
         )
 
         # Determine whether an edge is a bridge
         bridges = set(nx.bridges(nx.MultiGraph(graph)))
 
         def is_bridge(row):
-            src, dst, *_ = tuple(map(int, row.name))
+            src, dst, *_ = row.name
+            src, dst = int(src), int(dst)
 
             return (src, dst) in bridges or (dst, src) in bridges
 
@@ -105,9 +107,12 @@ class Explorer:
         df_edges_highlight = df_edges_normal[~mask2]
 
         df = pd.DataFrame(df_edges)
+        df_null = df[df.isnull()]
+
+        df_edges_normal = df_edges_normal[~df_edges_normal.isnull()]
 
         # Create road map
-        mapp = df_edges_normal.explore(
+        mapp = df_edges.explore(
             column="highway",  # The column to visualize
             legend=True,
             color=df_edges_normal["color"],
@@ -116,8 +121,13 @@ class Explorer:
             max_zoom=25,
         )
 
+        # Add click event to display coordinate
+        popup = LatLngPrecisionPopup()
+        popup.add_to(mapp)
+
         # Add bridges to the map
         for (src, dst, _), data in df_edges_bridge.iterrows():
+            break
             coords = find_edge_coords(graph, src, dst)
             line = Plotter.create_line(
                 coords,
@@ -142,16 +152,41 @@ class Explorer:
         for node, data in graph.nodes(data=True):
             if (location := find_node_location(graph, node)) is not None:
                 is_removed = "is_removed" in data and data["is_removed"]
+                is_highlighted = "is_highlighted" in data and data["is_highlighted"]
                 kwargs = (
-                    {"color": "white", "background_color": "gray", "opacity": 0.5}
+                    {
+                        "color": "white",
+                        "background_color": "gray",
+                        "opacity": 0.5,
+                    }
                     if is_removed
-                    else {}
+                    else {
+                        "background_color": "blue" if is_highlighted else "yellow",
+                        "color": "white" if is_highlighted else "black",
+                    }
                 )
 
-                line = Plotter.create_marker(node, location, **kwargs)
-                line.add_to(mapp)
+                marker = Plotter.create_marker(node, location, **kwargs)
+                marker.add_to(mapp)
 
-        # Add edges to map
+                text = f"{node}: {data['y']}, {data['x']}"
+                marker.add_child(folium.Tooltip(text))
+
+        # Add key information to map
+        for src, dst, key, data in graph.edges(data=True, keys=True):
+            break
+            if not isinstance(key, int) or key < 1:
+                continue
+
+            if location := find_edge_midpoint(graph, src, dst, key):
+                marker = Plotter.create_marker(
+                    f"{src}-{dst}-{key}",
+                    location,
+                    **{"color": "white", "background_color": "green"},
+                )
+                marker.add_to(mapp)
+
+        # Add removed edges to map
         for (src, dst, _), data in df_edges_remove.iterrows():
             coords = find_edge_coords(graph, src, dst)
 
@@ -160,19 +195,12 @@ class Explorer:
                     coords,
                     color="gray",
                     opacity=0.3,
+                    weight=4,
                 )
                 line.add_to(mapp)
 
-        path = HTML_PATH / f"map.html"
-        mapp.save(path)
+        mapp.save(HTML_PATH / f"map.html")
+        map_path = Paths.map(path)
+        print(path, map_path)
+        mapp.save(map_path)
         logger.info("Roads explored!")
-
-
-if __name__ == "__main__":
-    from crunner.handler import Handler
-
-    path = Path("Rotterdam") / "Nieuwe Werk"
-    graph = Handler.load_from_file(path)
-
-    explorer = Explorer()
-    explorer.explore_components(graph)

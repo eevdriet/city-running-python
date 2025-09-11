@@ -1,0 +1,36 @@
+[project]
+name = "crunner"
+version = "0.1.0"
+description = "Scripts for trying to run every street in my cities"
+authors = [
+    { name = "Eertze van de Riet", email = "eertze.0@gmail.com" }
+]
+requires-python = ">=3.13"
+readme = "README.md"
+dependencies = [
+    "attrs>=25.3.0",
+    "bs4>=0.0.2",
+    "folium>=0.20.0",
+    "garminconnect>=0.2.28",
+    "geopy>=2.4.1",
+    "gpxpy>=1.6.2",
+    "mapclassify>=2.10.0",
+    "matplotlib>=3.10.6",
+    "networkx>=3.5",
+    "openpyxl>=3.1.5",
+    "osmnx>=2.0.6",
+    "polars>=1.33.0",
+    "requests>=2.32.5",
+    "selenium>=4.35.0",
+    "send2trash>=1.8.3",
+    "shapely>=2.1.1",
+]
+
+[project.scripts]
+main = "crunner.main:main"
+garmin = "crunner.garmin:main"
+excel = "crunner.excel.main:main"
+
+[build-system]
+requires = ["uv_build>=0.8.13,<0.9.0"]
+build-backend = "uv_build"

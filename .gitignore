@@ -1,6 +1,6 @@
 # Ignore folders
 build
-data
+/data
 cache
 img
 

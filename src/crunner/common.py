@@ -1,11 +1,32 @@
 from pathlib import Path
 
-DATA_PATH = Path.cwd() / "data"
+Circuit = list[tuple[int, int, any]]
+
+__ROOT = Path(__file__).parent.parent.parent
+DATA_PATH = __ROOT / ".." / "data"
+
+CIRCUIT_PATH = DATA_PATH / "circuit"
+EXCEL_PATH = DATA_PATH / "excel"
+GPX_PATH = DATA_PATH / "gpx"
 GRAPH_PATH = DATA_PATH / "graph"
-POLYGON_PATH = DATA_PATH / "polygon"
 HTML_PATH = DATA_PATH / "html"
-MAP_PATH = HTML_PATH / "map.html"
-CIRCUIT_PATH = HTML_PATH / "circuit.html"
+MAP_PATH = DATA_PATH / "map"
+OFFSET_PATH = DATA_PATH / "offset"
+OSM_PATH = DATA_PATH / "osm"
+PLOTTED_PATH = DATA_PATH / "plotted"
+AREA_PATH = DATA_PATH / "area"
+POLYGON_PATH = DATA_PATH / "polygon"
+RUNS_PATH = DATA_PATH / "runs"
+STREET_PATH = DATA_PATH / "streets"
+
+
+AREA_IDS = {
+    "CP": "Capelle",
+    "GR": "Groningen",
+    "RR": "Rotterdam",
+    "RRG": "Rotterdam (gemeente)",
+}
+
 
 NON_RUNNABLE_ROADS = [
     "primary",
@@ -37,5 +58,6 @@ ROAD_COLOR_MAP = {
     "path": "#FFBB78",
     "steps": "#9EDAE5",
     "trunk": "#17BECF",
+    "track": "#17BECF",
     "unclassified": "#17BECF",
 }

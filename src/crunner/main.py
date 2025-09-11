@@ -1,36 +1,29 @@
-from pathlib import Path
+import sys
 
-import networkx as nx
-
-from crunner.editor import Editor
-from crunner.graph import (
-    ToggleOption,
-    convert_to_simple_undirected,
-    find_partitions_from_dist,
-    total_length,
-)
+from crunner.editor import Editor, EditorOptions
+from crunner.graph import ToggleOption
 from crunner.handler import Handler
-from crunner.plotter import Plotter
-from crunner.route import Postman
+
 
 # Load in graph to edit
+def main():
+    handler = Handler()
 
-# Edit the graph as much as you like
-toggle_opt = ToggleOption.KEEP_FROM_NODE
-editor = Editor()
-graph, path = editor.ask_for_graph()
-graph = editor.edit(graph, path, auto_save=True, toggle_opt=toggle_opt)
+    suffix = sys.argv[1] if len(sys.argv) > 1 else None
+    result = handler.ask_for_graph2(suffix)
+    if not result:
+        return
 
-# Find a circuit for the current graph
-postman = Postman()
-source = int(input("Source for the circuit: "))
-circuit, graph = postman.rpp_undirected(graph, source=source)
+    graph, path = result
+    editor = Editor()
 
-# # Plot the circuit
-plotter = Plotter()
-plotter.plot_circuit(graph, circuit)
+    opts: EditorOptions = {
+        "auto_save": False,
+        "auto_circuit": False,
+        "toggle_opt": ToggleOption.KEEP_FROM_NODE,
+    }
+    graph = editor.edit(graph, path, opts)
 
-# 109-108
-# 106-64
-# 314-23
-pass
+
+if __name__ == "__main__":
+    main()

@@ -1,19 +1,44 @@
+import time
+from collections import defaultdict
 from functools import partial
 from pathlib import Path
+from typing import Callable, Optional, TypedDict
 
 import networkx as nx
-from flask import Flask, render_template
+from numpy import isinf
 
 from crunner.common import GRAPH_PATH, HTML_PATH, POLYGON_PATH
-from crunner.editor.command import Command, CommandFunc
+from crunner.editor.command import Command, CommandFunc, save_graph
+from crunner.editor.command.add_edge import AddEdgeCommand
+from crunner.editor.command.add_edges import AddEdgesCommand
+from crunner.editor.command.add_node import AddNodeCommand
+from crunner.editor.command.add_nodes import AddNodesCommand
+from crunner.editor.command.change_graph import ChangeGraphCommand
+from crunner.editor.command.extend_graph import ExtendGraphCommand
+from crunner.editor.command.find_circuit import FindCircuitCommand
 from crunner.editor.command.remove_toggled import RemoveToggledCommand
-from crunner.editor.command.show_by_name import show_by_name_menu
+from crunner.editor.command.save_graph import SaveGraphCommand
+from crunner.editor.command.set_distances import SetDistancesCommand
 from crunner.editor.command.split_graph import split_graph_menu
-from crunner.editor.command.toggle_elem import toggle_elem_menu
+from crunner.editor.command.toggle_highlighted import toggle_highlighted_menu
+from crunner.editor.command.toggle_removed import toggle_menu
 from crunner.editor.command.toggle_type import toggle_type_menu
 from crunner.explore import Explorer
 from crunner.graph import ToggleOption
 from crunner.handler import Handler
+
+
+class EditorOptions(TypedDict):
+    auto_save: Optional[bool]
+    auto_circuit: Optional[bool]
+    toggle_opt: Optional[ToggleOption]
+
+
+DEFAULT_OPTIONS: EditorOptions = {
+    "auto_save": False,
+    "auto_circuit": False,
+    "toggle_opt": ToggleOption.KEEP_LARGEST,
+}
 
 
 class Editor:
@@ -21,59 +46,58 @@ class Editor:
         # Graph
         self.explorer = Explorer()
         self.handler = Handler()
-        self.graph: nx.MultiDiGraph = None
-
-        # App
-        self.app = Flask(__name__, template_folder=HTML_PATH)
-        self.app.add_url_rule("/", view_func=self.render)
+        self.graph: Optional[nx.MultiDiGraph] = None
+        self.path: Optional[Path] = None
 
         # Commands
-        self.COMMAND_MAP: list[tuple[str, callable]] = []
+        self.COMMAND_MAP: dict[str, tuple[str, Callable]] = {}
+        self.COMMAND_LIST: list[Callable] = []
         self.command_history: list[Command] = []
         self.command_redos: list[Command] = []
 
-    def render(self):
-        return render_template("map.html")
-
-    def __create_graph_prompt(self):
-        prompt = """\
-How would you like to load the graph?
---------------------------
-"""
-        for idx, (label, _, _) in enumerate(self.LOAD_MAP, start=1):
-            prompt += f"[{idx}] {label}\n"
-        prompt += f"""\
---------------------------
-Enter here: """
-
-        return prompt
-
     def __create_edit_prompt(self):
-        prompt = """\
+        opts = "\n".join(
+            f"[{idx:>2} | {shorthand:>3}] {label}"
+            for idx, (shorthand, (label, _)) in enumerate(
+                self.COMMAND_MAP.items(), start=1
+            )
+        )
+
+        return f"""\
 What would you like to do?
 --------------------------
-"""
-        for idx, (label, _) in enumerate(self.COMMAND_MAP, start=1):
-            prompt += f"[{idx}] {label}\n"
-
-        prompt += f"""\
-[{len(self.COMMAND_MAP) + 1}] Undo
-[{len(self.COMMAND_MAP) + 2}] Redo
+{opts}
 --------------------------
-Enter here: """
+[{self.path.stem}]
+Enter here (or press Q to quit): """
 
-        return prompt
+    def do(self, command: int | str | Command):
+        if not isinstance(command, Command):
+            # Choose command based on chosen position in list
+            if isinstance(command, int):
+                if not (0 <= command < len(self.COMMAND_MAP)):
+                    return
 
-    def do(self, command_idx: int):
-        # Create the command and execute if valid
-        _, command_func = self.COMMAND_MAP[command_idx]
+                command_func = self.COMMAND_LIST[command]
 
-        command = command_func()
+            # Choose command based on its identifier
+            elif isinstance(command, str):
+                if command not in self.COMMAND_MAP:
+                    return
+
+                # Create the command and execute if valid
+                _, command_func = self.COMMAND_MAP[command]
+
+            # Execute command if any was chosen
+            command = command_func()
+
         if command is None:
             return
 
-        self.command_history.append(command)
         command.execute()
+
+        # Register command in history for undo/redoing
+        self.command_history.append(command)
 
     def undo(self):
         if not self.command_history:
@@ -99,117 +123,106 @@ Enter here: """
         path = path if path else input("Name for the graph (without extension): ")
         self.handler.save(self.graph, path)
 
-    def ask_for_graph(self):
-        self.LOAD_MAP: list[tuple[str, callable, Path]] = [
-            ("Load from graph file", self.handler.load_from_file, GRAPH_PATH),
-            (
-                "Load from polygon file",
-                self.handler.load_from_polygon_file,
-                POLYGON_PATH,
-            ),
-        ]
-
-        prompt = self.__create_graph_prompt()
-
-        while True:
-            output = input(prompt)
-            if not output or not output.isdigit():
-                break
-
-            idx = int(output) - 1
-            if not (0 <= idx < len(self.LOAD_MAP)):
-                continue
-
-            _, load_func, base_path = self.LOAD_MAP[idx]
-
-            path = Path(input("Give a path to load from: "))
-            full_path = base_path / path
-            if not full_path.exists():
-                continue
-
-            return load_func(full_path), full_path
-
     def edit(
         self,
         graph: nx.MultiDiGraph,
         path: Path,
-        auto_save: bool = False,
-        toggle_opt: ToggleOption = ToggleOption.KEEP_LARGEST,
+        opts: EditorOptions = {},
     ):
-        self.app.run(debug=True)
+        opts = {**DEFAULT_OPTIONS, **opts}
+
         self.graph = graph
-        self.COMMAND_MAP: list[tuple[str, CommandFunc]] = [
-            (
-                "Toggle nodes/edges",
+        self.path = path
+
+        self.COMMAND_MAP = {
+            "T": (
+                "Toggle removed",
                 partial(
-                    toggle_elem_menu,
+                    toggle_menu,
                     graph=self.graph,
-                    toggle_opt=toggle_opt,
+                    toggle_opt=opts["toggle_opt"],
                 ),
             ),
-            (
-                "Toggle edge type",
-                partial(
-                    toggle_type_menu,
-                    graph=self.graph,
-                    toggle_opt=toggle_opt,
-                ),
+            # "TE": (
+            #     "Toggle removed (edge type)",
+            #     partial(
+            #         toggle_type_menu,
+            #         graph=self.graph,
+            #         toggle_opt=toggle_opt,
+            #     ),
+            # ),
+            # "TH": (
+            #     "Toggle highlighted",
+            #     partial(toggle_highlighted_menu, graph=self.graph),
+            # ),
+            "AN": (
+                "Add node",
+                partial(AddNodeCommand, graph=self.graph),
             ),
-            (
+            "ANS": (
+                "Add nodes",
+                partial(AddNodesCommand, graph=self.graph),
+            ),
+            "AE": (
+                "Add edge",
+                partial(AddEdgeCommand, graph=self.graph),
+            ),
+            "AES": ("Add edges", partial(AddEdgesCommand, graph=self.graph)),
+            "R": (
                 "Remove toggled",
                 partial(
                     RemoveToggledCommand,
                     graph=self.graph,
                 ),
             ),
-            (
+            "X": (
                 "Split graph",
                 partial(split_graph_menu, graph=self.graph, path=path),
             ),
-            (
-                "Show by name",
-                partial(show_by_name_menu, graph=self.graph),
+            "E": (
+                "Extend with existing graph",
+                partial(ExtendGraphCommand, graph=self.graph),
             ),
-        ]
+            "C": (
+                "Find circuit for graph",
+                partial(
+                    FindCircuitCommand,
+                    graph=self.graph,
+                    path=path,
+                    auto_circuit=opts["auto_circuit"],
+                ),
+            ),
+            "D": (
+                "Set distances based on geography",
+                partial(SetDistancesCommand, graph=self.graph),
+            ),
+            "S": (
+                "Save as",
+                partial(SaveGraphCommand, graph=self.graph, path=path),
+            ),
+            "U": ("Undo", self.undo),
+            "Y": ("Redo", self.redo),
+        }
+        self.COMMAND_LIST = [func for _, func in self.COMMAND_MAP.values()]
 
         output = ""
         prompt = self.__create_edit_prompt()
 
         while True:
-            # Plot the current state of the graph
-            self.explorer.explore_roads(self.graph)
+            self.explorer.explore_roads(self.graph, path)
+            if opts["auto_save"]:
+                self.save_graph(path)
 
             # Ask the user for the next command
             output = input(prompt)
-            if not output or not output.isdigit():
+            if output.upper() == "Q":
                 break
 
-            idx = int(output) - 1
-
-            if 0 <= idx < len(self.COMMAND_MAP):
-                self.do(idx)
-            elif idx == len(self.COMMAND_MAP):
-                self.undo()
-            elif idx == len(self.COMMAND_MAP) + 1:
-                self.redo()
+            # Perform the command
+            if not output.isdigit():
+                self.do(output)
             else:
-                continue
-
-            if auto_save:
-                self.save_graph(path)
+                idx = int(output) - 1
+                self.do(idx)
 
         return self.graph
-
-
-if __name__ == "__main__":
-    editor = Editor()
-    path = Path("Rotterdam") / "Nieuwe Werk"
-    # graph = editor.handler.load_from_polygon_file(path)
-    graph = editor.handler.load_from_file(path)
-
-    editor.edit(
-        graph,
-        path,
-        auto_save=True,
-        toggle_opt=ToggleOption.KEEP_LARGEST,
-    )

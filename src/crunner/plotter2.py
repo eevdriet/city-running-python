@@ -1,28 +1,33 @@
 import json
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any
 
 import folium
 import folium.plugins
 import folium.utilities
+import ipyleaflet as ipl
+import ipywidgets as ipw
+import matplotlib.pyplot as plt
 import networkx as nx
+import osmnx as ox
 from veelog import setup_logger
 
-from crunner.common import CIRCUIT_PATH, HTML_PATH, Circuit
-from crunner.gpx import to_gpx
+from crunner.common import HTML_PATH
 from crunner.graph import *
-from crunner.path import Paths
+from crunner.handler import Handler
+from crunner.route import Postman
 
 logger = setup_logger(__name__)
 
+Circuit = list[tuple[int, int, any]]
 
-class Plotter:
+
+class LeafletPlotter:
     @classmethod
     def create_map(cls, graph: nx.Graph) -> folium.Map:
         center = find_center(graph)
 
-        return folium.Map(center, zoom_start=16, max_zoom=25)
+        return ipl.Map(center=center, max_zoom=20, zoom=12, scroll_wheel_zoom=True)
 
     @classmethod
     def create_line(
@@ -30,35 +35,44 @@ class Plotter:
         coords: list[Coord],
         color: str = "black",
         opacity: float = 1.0,
-        weight: float = 2.0,
+        weight: int = 2,
         **kwargs,
     ) -> folium.PolyLine:
-        return folium.PolyLine(
+        return ipl.Polyline(
             locations=coords, color=color, opacity=opacity, weight=weight
         )
 
     @classmethod
-    def create_marker(cls, text: str, location: Coord, **kwargs) -> folium.Marker:
-        return folium.Marker(
-            radius=kwargs.get("radius", 2),
-            color="black",
-            icon=folium.DivIcon(
-                html=f"""<div style="
-                        background-color: {kwargs.get("background_color", "yellow")};
-                        border: 2px solid black;
-                        border-radius: 2px;
-                        padding: 0px 5px;
-                        font-size: 10px;
-                        font-weight: bold;
-                        opacity: {kwargs.get("opacity", 1.0)};
-                        position: absolute;
-                        left: 50%;
-                        transform: translateX(-50%);
-                        color: {kwargs.get("color", "black")};">{text}</div>"""
-            ),
-            fill_opacity=0.1,
-            location=location,
+    def create_icon(cls, text: str, **kwargs):
+        return ipl.DivIcon(
+            html=f"""<div style="
+                background-color: {kwargs.get("background_color", "yellow")};
+                border: 2px solid black;
+                border-radius: 2px;
+                padding: 0px 5px;
+                text-align: start;
+                font-size: 10px;
+                font-weight: bold;
+                opacity: {kwargs.get("opacity", 1.0)};
+                position: absolute;
+                left: 50%;
+                transform: translateX(-50%);
+                color: {kwargs.get("color", "black")};">
+                    {text}
+                </div>"""
         )
+
+    @classmethod
+    def create_marker(cls, node: int, location: Coord, **kwargs) -> ipl.Marker:
+        marker = ipl.Marker(
+            location=location,
+            draggable=False,
+            icon=cls.create_icon(str(node), **kwargs),
+            title=str(node),
+        )
+
+        marker.node = node
+        return marker
 
     @classmethod
     def create_timeline(
@@ -132,13 +146,7 @@ class Plotter:
 
         return timeline, timeline_slider
 
-    def plot_circuit(
-        self,
-        graph: nx.Graph,
-        circuit: Circuit,
-        path: Path,
-        stats: Optional[dict[str, Any]] = None,
-    ):
+    def plot_circuit(self, graph: nx.Graph, circuit: Circuit):
         if len(circuit) == 0:
             return
 
@@ -159,8 +167,7 @@ class Plotter:
             start_marker.add_to(map)
 
         # Add a timeline of all traversed edges in the circuit
-        edges = [find_edge_coords(graph, src, dst) for src, dst, *_ in circuit]
-
+        edges = [find_edge_coords(graph, src, dst) for src, dst, _ in circuit]
         timeline, timeline_slider = self.create_timeline(edges)
         timeline.add_to(map)
         timeline_slider.add_to(map)
@@ -179,15 +186,20 @@ class Plotter:
                 seq_marker.add_to(map)
 
         # Save the circuit map
-        route_path = Paths.circuit(path).with_suffix(".html")
-        map.save(HTML_PATH / "circuit.html")
+        path = HTML_PATH / f"circuit.html"
+        map.save(path)
         logger.info("Circuit explored!")
 
-        # Save the statistics too
-        if stats:
-            stats_path = Paths.circuit(path)
-            with open(stats_path, "w") as file:
-                json.dump(stats, file, indent=4)
 
-        # Create and save the GPX data
-        to_gpx(circuit, graph, path, stats, edges)
+if __name__ == "__main__":
+    from crunner.handler import Handler
+
+    handler = Handler()
+    path = Path("Rotterdam") / "Middelland-Zuid"
+    graph = handler.load_from_file(path)
+
+    SOURCE = 67
+    circuit = Postman().rpp_undirected(graph, source=SOURCE)
+
+    plotter = LeafletPlotter()
+    plotter.plot_circuit(graph, circuit)

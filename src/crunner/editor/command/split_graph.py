@@ -4,7 +4,7 @@ from typing import Optional, override
 
 import networkx as nx
 
-from crunner.editor.command import Command
+from crunner.editor.command import Command, input_nodes_edges
 from crunner.graph import Edge, Node, ToggleOption, find_components
 from crunner.handler import Handler
 
@@ -26,6 +26,13 @@ class SplitGraphCommand(Command):
         self.handler = Handler()
 
     def __find_and_toggle(self):
+        # -- Finding components -- #
+        # 1. Toggle all nodes for removal to determine components
+        # 2. Per component, determine which edges connect to the nodes that are removed
+
+        # -- Saving components -- #
+        # 1. Toggle back nodes to
+
         # Add edges that connect to the node to toggle
         for node in self.nodes:
             for edge in self.graph.in_edges(node, keys=True):
@@ -43,6 +50,7 @@ class SplitGraphCommand(Command):
 
     def __save_graphs(self):
         components = find_components(self.graph, ToggleOption.KEEP_ALL)
+        self._toggle(self.nodes, self.edges)
 
         # List components (show 5 nodes or all if it has fewer)
         for n, component in enumerate(components, start=1):
@@ -50,14 +58,38 @@ class SplitGraphCommand(Command):
             nodes = list(component) if n_nodes < 5 else list(islice(component, 5))
             print(f"Component {n} has {n_nodes} nodes: {nodes}")
 
-        # Ask how to
+        # Save components
         print("Saving (empty for no saving, otherwise give name)")
         for n, component in enumerate(components, start=1):
-            output = input(f"Component {n}?: ")
-            if not output:
+            # Ask for the name, blank skips saving
+            name = input(f"Component {n}?: ")
+            if not name:
                 continue
 
-            path = self.path.with_stem(output)
+            if False:
+                # Ask which nodes to add back (e.g. when you want to keep a dividing road in both components)
+                print("Which nodes do you want to add back to the component?")
+                # nodes = {
+                #     dst
+                #     for dst in set(self.graph.nodes) - component
+                #     if any(self.graph.has_edge(src, dst) for src in component)
+                # }
+                output = input(", ".join(str(node) for node in self.nodes) + ": ")
+                if output:
+                    chosen_nodes = (
+                        self.nodes
+                        if output == "all"
+                        else [int(node) for node in output.replace(" ", "").split(",")]
+                    )
+                    component.update(chosen_nodes)
+            else:
+                component.update(self.nodes)
+
+            # for node in component:
+            #     data = self.graph.nodes[node]
+            #     data["is_removed"] = False
+
+            path = self.path.with_stem(name)
             graph = nx.subgraph(self.graph, component)
             self.handler.save(graph, path)
 
@@ -82,15 +114,8 @@ class SplitGraphCommand(Command):
 
 
 def split_graph_menu(graph: nx.Graph, path: Path) -> Optional[SplitGraphCommand]:
-    output = input(
-        "List nodes/edges to toggle (separate with , and separate nodes with -): "
-    )
-    if not output:
+    nodes, edges = input_nodes_edges("to split into components")
+    if not nodes and not edges:
         return None
-
-    nodes = {int(item) for item in output.split(",") if not "-" in item}
-    edges = {
-        tuple(map(int, item.split("-"))) for item in output.split(",") if "-" in item
-    }
 
     return SplitGraphCommand(graph, path, nodes, edges)
