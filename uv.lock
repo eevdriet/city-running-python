@@ -186,6 +186,7 @@ dependencies = [
     { name = "selenium" },
     { name = "send2trash" },
     { name = "shapely" },
+    { name = "veelog" },
 ]
 
 [package.metadata]
@@ -206,6 +207,7 @@ requires-dist = [
     { name = "selenium", specifier = ">=4.35.0" },
     { name = "send2trash", specifier = ">=1.8.3" },
     { name = "shapely", specifier = ">=2.1.1" },
+    { name = "veelog", editable = "../../python/veelog" },
 ]
 
 [[package]]
@@ -1181,6 +1183,11 @@ wheels = [
 socks = [
     { name = "pysocks" },
 ]
+
+[[package]]
+name = "veelog"
+version = "1.0.0"
+source = { editable = "../../python/veelog" }
 
 [[package]]
 name = "websocket-client"

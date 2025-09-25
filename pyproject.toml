@@ -24,6 +24,7 @@ dependencies = [
     "selenium>=4.35.0",
     "send2trash>=1.8.3",
     "shapely>=2.1.1",
+    "veelog",
 ]
 
 [project.scripts]
@@ -34,3 +35,6 @@ excel = "crunner.excel.main:main"
 [build-system]
 requires = ["uv_build>=0.8.13,<0.9.0"]
 build-backend = "uv_build"
+
+[tool.uv.sources]
+veelog = { path = "../../python/veelog", editable = true }

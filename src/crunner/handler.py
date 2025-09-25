@@ -10,13 +10,10 @@ import networkx as nx
 import osmnx as ox
 import polars as pl
 import shapely
-from numpy import shape
 from veelog import setup_logger
 
-from crunner.common import (AREA_PATH, GRAPH_PATH, NON_RUNNABLE_ROADS,
-                            POLYGON_PATH)
-from crunner.graph import (annotate_with_distances, find_edge_coords,
-                           toggle_edge_attr, toggle_node_attr)
+from crunner.common import AREA_PATH, GRAPH_PATH, NON_RUNNABLE_ROADS, POLYGON_PATH
+from crunner.graph import annotate_with_distances, find_edge_coords, toggle_edge_attr
 from crunner.path import Paths
 
 logger = setup_logger(__name__)
@@ -202,7 +199,8 @@ Enter here: """
         load_func = partial(
             ox.graph_from_polygon,
             polygon=polygon,
-            custom_filter=cls.CUSTOM_FILTERS,
+            network_type="bike",
+            # custom_filter=cls.CUSTOM_FILTERS,
             simplify=True,
         )
 
